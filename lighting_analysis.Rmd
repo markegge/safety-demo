@@ -9,6 +9,8 @@ date: "5/3/2020"
 output: html_document
 ---
 
+View the source on GitHub: [https://github.com/markegge/safety-demo](https://github.com/markegge/safety-demo)
+
 # Pennsylvania Road Lighting and Safety
 
 This repository demonstrates an end-to-end analysis of the question:
@@ -220,8 +222,7 @@ Decision trees are useful tools to determine which dataset attributes our predic
 
 ```{r}
 # What explains / predicts crash counts? A decision tree:
-fit <- rpart(annual_crashes ~ DISTRICT_N + SEG_LNGTH_ + CUR_AADT + DLY_VMT,
-             data = DT)
+fit <- rpart(annual_crashes ~ DISTRICT_N + SEG_LNGTH_ + CUR_AADT + DLY_VMT, data = DT)
 rpart.plot(fit)
 
 # What explains / predicts crash rates?
@@ -305,8 +306,7 @@ ggplot(synth, aes(x = mvmt, y = total_crashes, color = lighting)) +
 
 # Conclusion
 
-The zero-inflated negative binomial model outputs show that unlit road segments
-have 0.47 fewer crashes on average than lit segments, controlling for VMT.
+The zero-inflated negative binomial model provides the best fit. The model outputs show that unlit road segments have 0.47 fewer crashes on average over a five-year period than lit segments, controlling for VMT.
 
 This finding is rather counter-intuitive from a "lighting improves safety"
 perspective, but makes sense if lighting is installed in locations with higher
@@ -316,3 +316,8 @@ More analysis and a richer dataset may be necessary to be able to isolate the sa
 impact of lighting. For example, a dataset perhaps a maintenance dataset could be used
 to determine when normally lit intersections were, in fact, dark—and compare the crash history
 for identical locations under lit and unlit conditions.
+
+---
+
+Notebook Author: Mark Egge (mark@eateggs.com)
+View the source on GitHub: [https://github.com/markegge/safety-demo](https://github.com/markegge/safety-demo)
