@@ -9,11 +9,29 @@ date: "5/3/2020"
 output: html_document
 ---
 
+# Pennsylvania Road Lighting and Safety
+
+This repository demonstrates an end-to-end analysis of the question:
+
+_How does roadway lighting affect roadway safety?_
+
+This project demonstrates the use of the R statistical programming languaeg and several packages to conduct a "data science" analysis of the relationship between roadway lighting (i.e. streetlights) and crashes on major roads in Pennsylvania.
+
+## Concepts Demonstrated
+
+This package illustrates several common transportation data analysis tasks, including:
+
+* Managing data using the fast `data.table` package
+* Using the `sf` package to perform a spatial join between point data (crashes) and line data (road segments)
+* Using the `rpart` package to predict lighting conditions for road segments with unknown lighting conditions based on road segments with known lighting conditions
+* Exploratory data analysis using the `leaflet` mapping package and `ggplot2` plotting package
+* Fitting a zero-inflated Poisson regression model to predict crash counts controlling for traffic volume
+
 # Method
 
 Load required packages:
 
-```{r}
+```{r, message=FALSE}
 library(sf) # spatial data manipulation
 library(data.table) # fast data manipulation
 library(leaflet) # easy mapping in R
@@ -53,12 +71,12 @@ We then run the provided `summary_plots` function to generate a PDF with a descr
 summary_plots(crashes, "out/plots.pdf")
 ```
 
-Take a moment to inspect the resulting file [out/plots.pdf](out/plots.pdf):
+Take a moment to inspect the resulting file [out/plots.pdf](plots.pdf):
 
 * What trends do you see in terms of the seasonality of crashes?
 * What data cleaning step would you need to take if you were analyzing crashes by Hour of Day?
 
-Finally, filter our crashes to those occurring at night, and create a "crash_lighting" attribute, based on the metadata in [docs/PA_Crashes_Data_Dictionary.pdf](docs/PA_Crashes_Data_Dictionary.pdf):
+Finally, filter our crashes to those occurring at night, and create a "crash_lighting" attribute, based on the metadata in [docs/PA_Crashes_Data_Dictionary.pdf](PA_Crashes_Data_Dictionary.pdf):
 
 ```{r}
 # Filter to only crashes with "2 - Dark - No Street Lights" or "3 - Dark - Street Lights"
@@ -141,7 +159,7 @@ kappa <- (accuracy - sum(p * q)) / (1 - sum(p * q)) # kappa score indicates mode
 cat("Model is", round(accuracy * 100), "% accurate with a Kappa score of", round(kappa, 2))
 ```
 
-Our decision tree is reasonably accurate (~75%) and the Kappa score (0.55) indicates moderate evidence that our model outperforms a naïve approach of simply assigning all attributes to the majority class.
+Our decision tree is reasonably accurate (~75%) and the Kappa score (0.55) indicates moderate evidence that our model outperforms a random chance. We can use this model to assign lighting_condition to the unknown segments.
 
 ```{r}
 # use decision tree to fill in missing lighting values
@@ -156,19 +174,6 @@ segments <- merge(segments, light[, .(id, lighting = segment_lighting)], by = "i
 ```
 
 
-Visualize the results:
-
-```{r}
-# limit map data to Pittsburgh region and reproject to web mercator for leaflet
-leaflet_segments <- st_transform(segments[segments$DISTRICT_N %in% c("11", "12"), ], 4326)
-
-pal <- colorFactor(c("yellow", "brown", "orange"), leaflet_segments$lighting)
-leaflet(data = leaflet_segments) %>% 
-  addProviderTiles(providers$CartoDB.DarkMatter) %>% 
-  addPolylines(color = ~pal(lighting)) %>%
-  addLegend(pal = pal, values = ~lighting)
-```
-
 ## Exploratory Data Analysis
 
 Exploratory data analysis allows the analyst to become more familiar with the data and informs the selection of subsequent modelling or data visualization steps.
@@ -176,31 +181,39 @@ Exploratory data analysis allows the analyst to become more familiar with the da
 ```{r}
 # convert spatial object to data.table for easy data manipulation
 DT <- as.data.table(st_drop_geometry(segments))
-# DT <- DT[!is.na(rate)] # one weird segment has no geom or rate
+DT <- DT[!is.na(rate)] # several segments have no geom or rate
 
 # plot crash counts vs. vmt
 # relationship between crashes and vmt seems fairly linear
-ggplot(DT, aes(x = mvmt, y = annual_crashes)) +
-  geom_point() + ggtitle("Crash Count vs. VMT")
+ggplot(DT, aes(x = mvmt, y = annual_crashes, color = lighting)) +
+  geom_point(alpha = 0.65, size = 1) + ggtitle("Crash Count vs. VMT")
+  
 ```
 
-Crash Rates:
+Visualize the illumination conditions and crash rates:
 
 ```{r}
-# map crash rates
+# limit map data to Pittsburgh region and reproject to web mercator for leaflet
+leaflet_segments <- segments[which(segments$DISTRICT_N %in% c("11", "12") & !st_is_empty(segments)), ]
+
+fpal <- colorFactor(c("yellow", "brown", "orange"), leaflet_segments$lighting)
 qpal <- colorQuantile(palette = "YlOrRd", domain = leaflet_segments$rate, n = 6)
-leaflet(data = leaflet_segments) %>% 
+
+leaflet(data = st_transform(leaflet_segments, 4326)) %>% 
   addProviderTiles(providers$CartoDB.DarkMatter) %>% 
-  addPolylines(color = ~qpal(rate)) %>%
-  addLegend(pal = qpal, values = ~rate, opacity = 1)
+  addPolylines(color = ~fpal(lighting), group = "Lighting") %>%
+  addPolylines(color = ~qpal(rate), group = "Crash Rates") %>%  
+  addLayersControl(
+    overlayGroups = c("Lighting", "Crash Rates"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>% hideGroup("Crash Rates") %>%
+  addLegend(pal = fpal, values = ~lighting, title = "Lighting") %>%
+  addLegend(pal = qpal, values = ~rate, title = "Crash Rate Quantile")
 ```
 
 
 ```{r}
-# some descriptive plots
-hist(DT$rate)
-hist(log(DT$rate))
-hist(DT[rate < 50]$rate, breaks = 50)
+
 ```
 
 Decision trees are useful tools to determine which dataset attributes our predictive of our outcome variables of interest
@@ -223,9 +236,14 @@ boxplot(rate ~ lighting, data = DT[rate < 2])
 # are lighting and AADT related?
 cor(DT$DLY_VMT, DT$lighting == "lit") # Yes - weak negative correlation
 
-hist(DT$mvmt) # VMT has an exponential distribution
-hist(DT$annual_crashes) # annual crashes has similar distribution
-hist(log(DT$mvmt))
+# some descriptive plots
+hist(DT$rate, main = "Distribution of Crash Rates")
+hist(log(DT$rate), main = "Distribution of Log Crash Rates")
+hist(DT[rate < 20]$rate, breaks = 50, main = "Distribution of Crash Rates Under 20")
+
+hist(DT$mvmt, main = "Distribution of VMT") # VMT has an exponential distribution
+hist(DT$annual_crashes, main = "Distribution of Crash Counts") # annual crashes has similar distribution
+hist(log(DT$mvmt), main = "Distribution of Log VMT")
 ```
 
 
@@ -239,39 +257,62 @@ Count data is typically Poisson or Negative Binomially distributed, so we'll use
 DT[, total_crashes := as.integer(annual_crashes * 5)] # total 5 year crashes for count model (whole numbers)
 
 # fit a Poisson regression model
-fit <- glm(total_crashes ~ lighting + mvmt, data = DT, family = poisson)
-summary(fit)
+fit_p <- glm(total_crashes ~ lighting + mvmt, data = DT, family = poisson)
+summary(fit_p)
+# Dispersion Statistic
+sum(resid(fit_p, type = "pearson")^2) / (nrow(DT) - length(coef(fit_p))) # data is 10x overdispersed
 # goodness of fit measure:
-1 - pchisq(summary(fit)$deviance, summary(fit)$df.residual) # model does not fit the data (p < 0.05)
+1 - pchisq(summary(fit_p)$deviance, summary(fit_p)$df.residual) # model does not fit the data (p < 0.05)
 
-# fit a negative binomial regression model
-fit <- MASS::glm.nb(total_crashes ~ lighting + mvmt, data = DT)
-summary(fit)
+# negative binomial regression model
+fit_nb <- MASS::glm.nb(total_crashes ~ lighting + mvmt, data = DT)
+summary(fit_nb)
+# Dispersion Statistic
+sum(resid(fit_nb)^2) / (nrow(DT) - length(coef(fit_nb)) + 1) # still overdispersed (1.13), but not as bad
 # goodness of fit measure:
-1 - pchisq(summary(fit)$deviance, summary(fit)$df.residual) # model does not fit the data
+1 - pchisq(summary(fit_nb)$deviance, summary(fit_nb)$df.residual) # model does not fit the data
 
-# fit a zero inflated negative binomial model
-fit <- pscl::zeroinfl(total_crashes ~ lighting + mvmt | mvmt, data = DT)
-summary(fit)
+# zero inflated poisson model
+fit_zip <- pscl::zeroinfl(total_crashes ~ lighting + mvmt | CUR_AADT, data = DT, dist = "poisson")
+summary(fit_zip)
+# Dispersion Statistic
+sum(resid(fit_zip, type = "pearson")^2) / (nrow(DT) - length(coef(fit_zip))) # significant overdispersed (6x)
+# goodness of fit:
+1 - pchisq(sum(resid(fit_zip)^2), summary(fit_zip)$df.residual) # model does not fit the data (p < 0.05)
+
+# zero inflated negative binomial model
+fit_zinb <- pscl::zeroinfl(total_crashes ~ lighting + mvmt | CUR_AADT, data = DT, dist = "negbin")
+summary(fit_zinb)
+# Dispersion Statistic
+sum(resid(fit_zinb, type = "pearson")^2) / (nrow(DT) - length(coef(fit_zinb)) + 1) # this is close to 1, which looks good
+# goodness of fit:
+1 - pchisq(sum(resid(fit_zinb)^2), summary(fit_zinb)$df.residual) # model doesn't fit but is closer than the others
+
 
 # what does this look like?
 synth <- data.table(lighting = c(rep("lit", 100), rep("unlit", 100)),
                     mvmt = seq(0.1, 70, length.out = 100))
 fit_aadt <- lm(CUR_AADT ~ poly(mvmt, 3), data = DT)
 synth$CUR_AADT <- predict(fit_aadt, newdata = synth)
-synth$total_crashes <- predict(fit, newdata = synth)
+synth$total_crashes <- predict(fit_zinb, newdata = synth)
 ggplot(synth, aes(x = mvmt, y = total_crashes, color = lighting)) + 
+  geom_point(data = DT, size = 0.5, alpha = 0.33) + 
   geom_line() +
+  coord_cartesian(xlim = c(0, 40), ylim = c(0, 60)) + 
   ggtitle("Estimated Crashes and VMT", "By Lighting Condition")
        
 ```
 
-
 # Conclusion
 
 The zero-inflated negative binomial model outputs show that unlit road segments
-have 0.39 fewer crashes on average than lit segments, controlling for VMT.
+have 0.47 fewer crashes on average than lit segments, controlling for VMT.
 
 This finding is rather counter-intuitive from a "lighting improves safety"
 perspective, but makes sense if lighting is installed in locations with higher
-crash risk (e.g. intersections).
+crash risk (e.g. intersections). 
+
+More analysis and a richer dataset may be necessary to be able to isolate the safety
+impact of lighting. For example, a dataset perhaps a maintenance dataset could be used
+to determine when normally lit intersections were, in fact, dark—and compare the crash history
+for identical locations under lit and unlit conditions.
