@@ -2,12 +2,7 @@
 # 2 May 2020
 # Author: Mark Egge (mark@eateggs.com)
 
-# options(scipen = 99) # disable scientific notation
-
 # DATA TRANSFORMATION -------------------------------------------------------------------
-
-# Safety analysis typically uses five years' worth of historic crash data
-# See doc/PA_Crashes_Data_Dictionary.pdf for details
 
 # Read in PA Crash CSVs for 2012 – 2016
 # Downloaded from https://crashinfo.penndot.gov/PCIT/welcome.html
@@ -21,6 +16,7 @@ crashes <- rbindlist(crashes) # join the five files into one
 
 # Filter to only crashes with "2 - Dark - No Street Lights" or 
 #                             "3 - Dark - Street Lights"
+# See doc/PA_Crashes_Data_Dictionary.pdf for details
 crashes <- crashes[ILLUMINATION %in% c(2, 3)]
 crashes[ILLUMINATION == 2, crash_lighting := "unlit"]
 crashes[ILLUMINATION == 3, crash_lighting := "lit"]
@@ -68,20 +64,20 @@ segment_crashes <- as.data.table(st_drop_geometry(joined))
 counts <- segment_crashes[, .(crashes = .N), by = .(id, crash_lighting)]
 
 # Reshape long to wide, filling missing values with zero
-lighting_counts <- dcast(counts, id ~ crash_lighting, value.var = "crashes", fill = 0)  
+counts <- dcast(counts, id ~ crash_lighting, value.var = "crashes", fill = 0)  
 
 # Count annual crashes by segment
-lighting_counts[, total_crashes := lit + unlit]
+counts[, total_crashes := lit + unlit]
 
 # Annual Crahes = total crashes divided by five years
-lighting_counts[, crashes := total_crashes / 5]
+counts[, crashes := total_crashes / 5]
 
 # Assign lighting based on majority of crashes (lit or unlit)
-lighting_counts[total_crashes > 0,
+counts[total_crashes > 0,
                 lighting := as.factor(ifelse(lit >= unlit, "lit", "unlit"))] 
 
 # Join imputed lighting conditions back to segments sf
-segments <- merge(segments, lighting_counts, by = "id")
+segments <- merge(segments, counts, by = "id")
 
 # Calculate crash rates - crashes per million VMT
 segments$mvmt <- segments$DLY_VMT * 365 / 1000000 # million annual vehicle miles travelled
@@ -116,11 +112,11 @@ cat("After"); table(segments$lighting, useNA = "ifany")
 
 # What explains / predicts crash counts? A decision tree:
 fit <- rpart(crashes ~ DISTRICT_N + SEG_LNGTH_ + CUR_AADT + DLY_VMT, data = segments)
-rpart.plot(fit, digits = -1)
+rpart.plot(fit, digits = -1, main = "Crash Counts")
 
 # What explains / predicts crash rates?
 fit <- rpart(rate ~ DISTRICT_N + SEG_LNGTH_ + CUR_AADT + DLY_VMT, data = segments)
-rpart.plot(fit, digits = -1)
+rpart.plot(fit, digits = -1, main = "Crashes per Million VMT")
 
 
 
@@ -131,18 +127,12 @@ rpart.plot(fit, digits = -1)
 
 # MAP LIGHTING TYPES
 # limit to Pittsburgh region and reproject to web mercator for leaflet
+
 library(leaflet) # easy mapping in R
 # Subset to Pittsburgh region
-leaflet_segments <- segments # segments[segments$DISTRICT_N %in% c("11", "12"), ]
+leaflet_segments <- segments[segments$DISTRICT_N %in% c("11", "12"), ]
 # Reproject from StatePlane to Web Mercator for Leaflet
 leaflet_segments <- st_transform(leaflet_segments, 4326)
-
-leaflet(leaflet_segments) %>%
-  addProviderTiles(providers$CartoDB.DarkMatter) %>% 
-  addPolylines(color = ~pal(lighting), group = "Lighting") %>%
-  addLegend(group = "Lighting", pal = pal, values = ~lighting, 
-            title = "Roadway Lighting", labels = c("Illuminated", "Unilluminated"))
-
 
 # Map lighting conditions and crash rates
 pal <- colorFactor(c("yellow", "brown", "orange"), leaflet_segments$lighting)
@@ -164,15 +154,15 @@ leaflet(leaflet_segments) %>%
   ) %>%
   hideGroup("Crash Rates")
 
-# convert spatial object to data.table for easy data manipulation
-DT <- as.data.table(st_drop_geometry(segments))
 
 # plot crash counts vs. vmt
 # relationship between crashes and vmt seems fairly linear
 library(ggplot2)
 ggplot(segments, aes(x = mvmt, y = crashes, color = lighting)) +
-  geom_point(alpha = 1/5, stroke = 0, size = 1.5) + 
+  geom_jitter(alpha = 0.5, stroke = 0, size = 1) + # scatter plot
   guides(color = guide_legend(override.aes = list(alpha = 1))) + 
+  coord_cartesian(xlim = c(0, 40), ylim = c(0, 20)) + # zoom in
+  xlab("Million Vehicle Miles Traveled") + ylab("Crash Count") +
   ggtitle("Crash Count vs. VMT")
 
 # box plot of crash rates (limiting to rate < 5 for visualization)
